@@ -1,0 +1,6 @@
+feedparser==6.0.12
+html2text==2025.4.15
+mcp==1.26.0
+strands==0.1.0
+strands-agents-tools>=0.1.0
+
