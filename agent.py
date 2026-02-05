@@ -4,9 +4,16 @@ from strands_tools import http_request, retrieve
 from mcp.client.streamable_http import streamable_http_client
 from strands.tools.mcp.mcp_client import MCPClient
 import json
-import html2text
-import feedparser
+from opentelemetry import trace
+from strands.telemetry import StrandsTelemetry
 
+strands_telemetry = StrandsTelemetry()
+strands_telemetry.setup_otlp_exporter()     # Send traces to OTLP endpoint
+strands_telemetry.setup_console_exporter()  # Print traces to console
+strands_telemetry.setup_meter(
+    enable_console_exporter=True,
+    enable_otlp_exporter=True) 
+    
 # Define a security and compliance focused system prompt
 
 AGENT_PROMPT = """You are a security and compliance expert that helps users understand difference compliance frameworks, such as HIPPA, NIST, PCI, and etc. 
@@ -21,7 +28,7 @@ You have the following capabilities:
     - In addition to providing the title, include a hyperlink to URL of the news 
     - Use the rss tool to get this from http://blogs.aws.amazon.com/security/blog/feed/recentPosts.rss
     - Do a max of 3 entries, unless the user requests a specific amount. Have the maximum be 10. 
-4. Use the retrieve tool to retrieve information about the image and PDF that is stored regarding SHIP and Security Hub
+4. Use the retrieve tool to retrieve information about the pdf that is stored regarding SHIP from the Bedrock knowledge base
 
 """
 
@@ -36,9 +43,6 @@ def security_compliance_list() -> list:
 
     return security_compliance_standards
 
-
-
-    
 def lambda_handler(event, context):
 
     #Sets up an MCP connection using Streamable HTTP transport
@@ -46,33 +50,29 @@ def lambda_handler(event, context):
         lambda: streamable_http_client("https://knowledge-mcp.global.api.aws")
     )
 
-
     with mcp_client:
 
+        session_id=event["user"]["session_id"]
         #Define tools available for agent to use along with the MCP
         tools_mcp = mcp_client.list_tools_sync()
         tools_mcp += [security_compliance_list, rss, retrieve]
-        
+
         # Create an agent with tools 
         agent = Agent(
            model = "us.amazon.nova-micro-v1:0",
            system_prompt = AGENT_PROMPT, 
-           tools = tools_mcp
+           tools = tools_mcp,
+           trace_attributes =  {
+                "session.id": session_id
+           }
         )
 
-        body = json.loads(event['body'])
-        response = agent(body['prompt'])
+        response = agent(event.get("prompt"))
 
     return {
         'statusCode': 200,
-        'body': json.dumps({
-            'response': str(response)
-        })
-    }
+        'response': str(response)
+        }
 
 
-"""
-curl -X POST $API_URL \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Can you tell me about IAM APIs?"}' | jq
-"""
+
